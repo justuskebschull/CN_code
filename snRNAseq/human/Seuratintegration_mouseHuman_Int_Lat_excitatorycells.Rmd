@@ -1,0 +1,359 @@
+---
+title: "Fig6 EX dataintegration by seurat"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    keep_tex: yes
+keep_md: yes
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+library(scrattch.hicat)
+library(dplyr)
+```
+
+
+Lets try using S3 for cross species alignment of Int and Lat human cells to mouse Int and Lat cells.
+
+load human neurons
+
+```{r}
+setwd('~/postdoc2/Gedankenpapers/CNevomanuscript/code/snRNAseq/human/')
+load('data/dataforplotting_3donors.RData')
+Idents(exB1clean)<-'merged.res.2.renamed'
+IN<-subset(exB1clean,idents = grep('Int',levels(exB1clean$merged.res.2.renamed),value = T))
+load('data/DNonly.RData')
+
+all<-merge(DNB0,DNB1)
+all<-merge(all,DNB3)
+all$merged.res.2.renamed<-'Lat.B1'
+all<-merge(all,IN)
+```
+
+
+
+
+```{r}
+human.data<-all@assays$RNA@counts
+human<-all
+
+```
+
+
+revert gene names to  ENSG genes 
+```{r}
+#load conversion table
+conversiontable=read.csv("data/EnsemblID_to_GeneSymbol.txt")
+conversiontable.df<-as.data.frame(conversiontable)
+
+conversiontable.notrepeated<-conversiontable[!(duplicated(conversiontable[,2])|duplicated(conversiontable[,2], fromLast=TRUE)),]
+rownames(conversiontable.notrepeated)<-conversiontable.notrepeated[,1]
+
+
+counts_translated<-human.data[rownames(human.data) %in% conversiontable.notrepeated[,2],]
+
+
+rownames(counts_translated)<-as.character(conversiontable.notrepeated$Gene.stable.ID[match(rownames(counts_translated),conversiontable.notrepeated$Gene.name)])
+
+
+counts_nottranslated<-human.data[!rownames(human.data) %in% conversiontable.notrepeated[,2],]
+
+human.data2<-rbind(counts_translated,counts_nottranslated)
+
+```
+
+
+
+
+
+
+load mouse data
+```{r}
+load(file = '../mouse/data/dataforplotting.RData')
+Idents(RL)<-'final.clusters2'
+RL<-subset(RL,idents=c("Lat.A1","Lat.B1","Lat.B2","IntA.A1","IntA.B1","IntA.B2",
+                       "IntP.A1","IntP.A2","IntP.B1"),invert=F)
+
+mouse<-RL
+mouse.data<-mouse@assays$RNA@counts
+```
+
+revert gene names to  ENSMUSG genes 
+```{r}
+#load conversion table
+conversiontable=read.csv("../mouse/EnseblID_to_GeneSymbol.txt")
+conversiontable.df<-as.data.frame(conversiontable)
+
+conversiontable.notrepeated<-conversiontable[!(duplicated(conversiontable[,2])|duplicated(conversiontable[,2], fromLast=TRUE)),]
+rownames(conversiontable.notrepeated)<-conversiontable.notrepeated[,1]
+
+
+counts_translated<-mouse.data[rownames(mouse.data) %in% conversiontable.notrepeated[,2],]
+
+
+rownames(counts_translated)<-as.character(conversiontable.notrepeated$Gene.stable.ID[match(rownames(counts_translated),conversiontable.notrepeated$Gene.name)])
+
+
+counts_nottranslated<-mouse.data[!rownames(mouse.data) %in% conversiontable.notrepeated[,2],]
+
+mouse.data2<-rbind(counts_translated,counts_nottranslated)
+
+```
+
+
+
+read in ortholog relationships obtained from ensemble biomart
+
+```{r}
+orth.table<-read.csv(file='data/human_mouse_orthologs.txt',header=T)
+#throw out anything that isnt onetoone
+orth.table<-orth.table[orth.table[,"Mouse.homology.type"]=="ortholog_one2one",]
+#drop extra columns
+orth.table.clean<-unique(orth.table[,c("Gene.stable.ID",'Mouse.gene.stable.ID','Mouse.gene.name')])
+```
+
+
+throw out what isn't in a 1:1 ortholog
+```{r}
+human.data.filtered<-human.data2[rownames(human.data2) %in% as.character(orth.table.clean$Gene.stable.ID),]
+rownames(human.data.filtered)<-as.character(orth.table.clean$Mouse.gene.stable.ID[match(rownames(human.data.filtered),orth.table.clean$Gene.stable.ID)])
+
+mouse.data.filtered<-mouse.data2[rownames(mouse.data2) %in% as.character(orth.table.clean$Mouse.gene.stable.ID),]
+rownames(mouse.data.filtered)<-as.character(orth.table.clean$Mouse.gene.stable.ID[match(rownames(mouse.data.filtered),orth.table.clean$Mouse.gene.stable.ID)])
+
+human.data.filtered2<-human.data.filtered[rownames(human.data.filtered) %in% rownames(mouse.data.filtered),]
+mouse.data.filtered2<-mouse.data.filtered[rownames(mouse.data.filtered) %in% rownames(human.data.filtered2),]
+
+```
+
+now convert them all back to mouse names for simplicity.
+
+replace known ENSMUSG genes with their names, keep the remainder
+```{r}
+#load conversion table
+conversiontable=read.csv("../mouse/EnseblID_to_GeneSymbol.txt")
+conversiontable.df<-as.data.frame(conversiontable)
+
+conversiontable.notrepeated<-conversiontable[!(duplicated(conversiontable[,2])|duplicated(conversiontable[,2], fromLast=TRUE)),]
+rownames(conversiontable.notrepeated)<-conversiontable.notrepeated[,1]
+
+
+counts_translated<-human.data.filtered2[rownames(human.data.filtered2) %in% rownames(conversiontable.notrepeated),]
+rownames(counts_translated)<-as.character(conversiontable.notrepeated$Gene.name[match(rownames(counts_translated),conversiontable.notrepeated$Gene.stable.ID)])
+counts_nottranslated<-human.data.filtered2[!rownames(human.data.filtered2) %in% rownames(conversiontable.notrepeated),]
+human.data.filtered3<-rbind(counts_translated,counts_nottranslated)
+
+
+counts_translated<-mouse.data.filtered2[rownames(mouse.data.filtered2) %in% rownames(conversiontable.notrepeated),]
+rownames(counts_translated)<-as.character(conversiontable.notrepeated$Gene.name[match(rownames(counts_translated),conversiontable.notrepeated$Gene.stable.ID)])
+counts_nottranslated<-mouse.data.filtered2[!rownames(mouse.data.filtered2) %in% rownames(conversiontable.notrepeated),]
+mouse.data.filtered3<-rbind(counts_translated,counts_nottranslated)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Set up seurat objects and find integration anchors
+
+```{r}
+mouse2<-CreateSeuratObject(mouse.data.filtered3)
+mouse2@meta.data<-mouse@meta.data
+mouse2$species<-'mouse'
+mouse2$donor<-'mouse'
+human2<-CreateSeuratObject(human.data.filtered3)
+human2@meta.data<-human@meta.data
+human2$species<-'human'
+
+human3<-merge(human2,mouse2)
+dcn.list<-SplitObject(human3,split.by = 'donor')
+#dcn.list<-list(human2,mouse2)
+
+for (i in 1:length(x = dcn.list)) {
+    dcn.list[[i]] <- NormalizeData(object = dcn.list[[i]], verbose = FALSE,scale.factor = 1e6)
+    dcn.list[[i]] <- FindVariableFeatures(object = dcn.list[[i]], 
+        selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+}
+
+
+DCN.anchors <- FindIntegrationAnchors(object.list = dcn.list, dims = 1:10,anchor.features = 2000)
+```
+
+```{r}
+DCN.integrated <- IntegrateData(anchorset = DCN.anchors, dims = 1:10)
+
+```
+
+```{r}
+library(ggplot2)
+library(cowplot)
+# switch to integrated assay. 
+DefaultAssay(object = DCN.integrated) <- "integrated"
+```
+
+```{r}
+DCN.integrated$speciesfacs<-as.factor(paste0(DCN.integrated$species,DCN.integrated$FACS))
+DCN.integrated$speciesDCN<-as.factor(paste0(DCN.integrated$species,DCN.integrated$DCN))
+
+```
+
+```{r}
+# Run the standard workflow for visualization and clustering
+#DCN.integrated <- ScaleData(object = DCN.integrated, verbose = FALSE)
+DCN.integrated <- ScaleData(object = DCN.integrated, verbose = FALSE,vars.to.regress = c())
+
+
+DCN.integrated<-RunPCA(DCN.integrated,dims=1:30)
+
+```
+
+```{r}
+ElbowPlot(DCN.integrated)
+```
+
+```{r}
+#DCN.integrated <- JackStraw(DCN.integrated, num.replicate = 100,dims=30)
+#DCN.integrated <- ScoreJackStraw(DCN.integrated, dims = 1:30)
+#JackStrawPlot(DCN.integrated, dims = 1:30)
+
+```
+
+
+
+```{r,fig.width=10,fig.height=4}
+DCN.integrated<-FindNeighbors(DCN.integrated,dims=1:6)
+DCN.integrated<-FindClusters(DCN.integrated,resolution=1)
+DCN.integrated <- RunTSNE(object = DCN.integrated, reduction = "pca", 
+    dims = 1:6,perplexity=30,seed.use =123)
+p1 <- DimPlot(object = DCN.integrated, reduction = "tsne", group.by = "species")
+p2 <- DimPlot(object = DCN.integrated, reduction = "tsne", 
+    label = TRUE, repel = TRUE) + NoLegend()
+(p1 | p2)
+```
+
+
+
+```{r,fig.width=15,fig.height=6}
+p1<-DimPlot(DCN.integrated,group.by = 'donor',label = T)
+p2<-DimPlot(DCN.integrated,group.by = 'final.clusters2',label=T)
+p3<-DimPlot(DCN.integrated,group.by = 'merged.res.2',label=T)
+p4<-DimPlot(DCN.integrated,group.by = 'speciesDCN')
+plot_grid(p1,p2,p3,p4,ncol=2)
+```
+
+
+
+merge clusters using allen package.
+```{r}
+library(scrattch.hicat)
+rd.dat <- t(GetAssayData(object = DCN.integrated, slot = "scale.data"))
+
+merge.param <- de_param(padj.th     = 0.05, 
+                     lfc.th      = 1, 
+                     low.th      = 1, 
+                     q1.th       = 0.4, 
+                     q.diff.th   = 0.6, 
+                     de.score.th = 40)
+
+merge.result <- merge_cl(as.matrix(GetAssayData(object = DCN.integrated, slot = "data")), 
+                         cl = DCN.integrated$integrated_snn_res.1, 
+                         rd.dat = rd.dat,
+                         de.param = merge.param)
+
+
+if (is.null(merge.result))
+  {DCN.integrated$merged.res.1<-'inh_1'
+} else {
+DCN.integrated$merged.res.1<-as.factor(paste('inh_',merge.result$cl,sep=''))
+}
+Idents(DCN.integrated)<-'merged.res.1'
+```
+
+```{r,fig.width=15,fig.height=10}
+p1<-DimPlot(DCN.integrated,label=T,group.by = 'merged.res.1',pt.size = 1.5)
+p2<-DimPlot(DCN.integrated,label=F,group.by = 'species',pt.size=1.5)
+p3<-DimPlot(DCN.integrated,label=F,group.by = 'donor',pt.size=1.5)
+p4<-DimPlot(DCN.integrated,label=T,group.by = 'final.clusters2',pt.size=1.5)
+p5<-DimPlot(DCN.integrated,label=T,group.by = 'merged.res.2.renamed',pt.size=1.5)
+(p1 | p2)/(p3 | p4)/(p5 | p5)
+```
+
+adjust colorpallets  for pretty plotting
+
+```{r}
+DCN.integrated$final.clustersM<-as.factor(DCN.integrated$final.clusters2)
+DCN.integrated$final.clustersM2<-factor(DCN.integrated$final.clustersM,
+                                        levels = levels(addNA(DCN.integrated$final.clustersM)), 
+                                        labels = c(levels(DCN.integrated$final.clustersM), 'human'),
+                                        exclude = NULL)
+DCN.integrated$final.clustersM2<-factor(DCN.integrated$final.clustersM2,
+                                       levels=levels(DCN.integrated$final.clustersM2)[c(1,4,5,7,2,3,6,8,9,10)])
+
+
+DCN.integrated$merged.res.2.renamedM<-as.factor(DCN.integrated$merged.res.2.renamed)
+DCN.integrated$merged.res.2.renamedM2<-factor(DCN.integrated$merged.res.2.renamedM,
+                                        levels = levels(addNA(DCN.integrated$merged.res.2.renamedM)), 
+                                        labels = c(levels(DCN.integrated$merged.res.2.renamedM), 'mouse'),
+                                        exclude = NULL)
+DCN.integrated$merged.res.2.renamedM2<-factor(DCN.integrated$merged.res.2.renamedM2,
+                                             levels=levels(DCN.integrated$merged.res.2.renamedM2)[c(3,1:2,4:7)])
+
+
+
+```
+
+
+```{r,fig.width=10,fig.height=7}
+library(RColorBrewer)
+p1<-DimPlot(DCN.integrated,label=F,group.by = 'merged.res.1',pt.size = 1.5)+
+  scale_color_brewer(palette = "Dark2")
+p2<-DimPlot(DCN.integrated,label=F,group.by = 'final.clustersM2',pt.size=1.5)+ 
+  scale_color_manual(values=c(RLpal[c(4:7,11:15)],'grey'))
+p3<-DimPlot(DCN.integrated,label=F,group.by = 'merged.res.2.renamedM2',pt.size=1.5,
+            order=(levels(DCN.integrated$merged.res.2.renamedM2)))+ 
+  scale_color_manual(values=rev(c(RLpalhuman[c(2:7)],'grey')))
+
+p4<-DimPlot(DCN.integrated,label=F,group.by = 'donor',pt.size=1.5,
+            order =(levels(as.factor(DCN.integrated$donor))))+
+  scale_color_manual(values=rev(c('#a1d99b','#41ab5d','#005a32','grey')))
+
+(p1 | p2)/(p3 | p4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

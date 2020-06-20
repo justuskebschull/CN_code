@@ -1,0 +1,122 @@
+---
+title: "FigS20 plots"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    keep_tex: yes
+keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(Seurat)
+library(cowplot)
+library(dplyr)
+library(patchwork)
+library(Hmisc)
+library(heatmap3)
+library(qlcMatrix)
+```
+
+load data
+
+```{r}
+setwd('~/postdoc2/Gedankenpapers/CNevomanuscript/code/snRNAseq/human/')
+load('data/dataforplotting_3donors.RData')
+Idents(exB1clean)<-'merged.res.2.renamed'
+notDN<-subset(exB1clean,idents = grep('Lat',levels(exB1clean$merged.res.2.renamed),value = T),invert=T)
+load('data/DNonly.RData')
+
+all<-merge(DNB0,DNB1)
+all<-merge(all,DNB3)
+all$merged.res.2.renamed<-'Lat.B1'
+ex<-merge(all,notDN)
+ex$merged.res.2.renamed<-factor(ex$merged.res.2.renamed,levels=c('Med','IntP.A1','IntP.B1','IntP.B2','IntA.B1','IntA.B2','Lat.B1'))
+
+
+inh<-CN.all.integrated
+DefaultAssay(inh)<-'RNA'
+```
+
+Find marker genes and plot dotplot
+```{r}
+Idents(ex)<-'merged.res.2.renamed'
+Idents(inh)<-'merged.res.2.renamed'
+
+library(dplyr)
+Emarkers<-FindAllMarkers(ex,logfc.threshold = 1,min.diff.pct = 0.35,min.pct = 0.4)
+
+Imarkers<-FindAllMarkers(inh,logfc.threshold = 1,min.diff.pct = 0.3,min.pct = 0.4)
+
+```
+```{r}
+Imarkers %>% group_by(cluster)%>% top_n(n = 5, wt = avg_logFC)
+```
+```{r}
+Emarkers %>% group_by(cluster)%>% top_n(n = 5, wt = avg_logFC)
+```
+```{r,fig.width=7,fig.height=6}
+Emarkers %>% group_by(cluster) %>% 
+  top_n(n = 1, wt = avg_logFC)->Emarkergenes
+Imarkers %>% group_by(cluster)%>% top_n(n = 1, wt = avg_logFC)->Imarkergenes
+
+#Emarkergenes$gene<-c("LMX1A","NXPH1","WHRN","CALB1","PROX1","TYR","LTBP2")
+Imarkergenes$gene<-c("SLC24A4","SLC6A5","RSPO3","NDNF","HTR2C")
+
+
+ex$mergeclusters<-ex$merged.res.2.renamed
+inh$mergeclusters<-inh$merged.res.2.renamed
+merged<-merge(ex,inh)
+merged$mergeclusters<-factor(merged$mergeclusters,levels=c(levels(ex$merged.res.2.renamed),levels(inh$merged.res.2.renamed)))
+Idents(merged)<-'mergeclusters'
+DotPlot(merged,features=c("SNAP25","RBFOX3","SLC17A6","GAD1",Emarkergenes$gene,Imarkergenes$gene),assay = 'RNA') + RotatedAxis()+coord_flip()
+```
+
+
+
+make a heatmap too.
+
+```{r,fig.width=15,fig.height=10}
+library(viridis)
+#Emarkers<-FindAllMarkers(ex,logfc.threshold = 1,min.diff.pct = 0.35,min.pct = 0.4)
+Emarkers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)->Emarkergenes
+
+#Imarkers<-FindAllMarkers(inh,logfc.threshold = 1,min.diff.pct = 0.3,min.pct = 0.4)
+Imarkers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)->Imarkergenes
+
+
+DoHeatmap(merged,features=
+            c("SNAP25","RBFOX3","SLC17A6","GAD1",unique(c(Emarkergenes$gene,Imarkergenes$gene))),
+          slot = 'data',disp.min = 0,
+          group.colors = c(RLpalhuman,VZpalhuman),group.bar.height = 0.01)+
+   scale_fill_viridis()
+
+```
+
+```{r,fig.width=8,fig.height=6}
+VlnPlot(merged,c("nFeature_RNA",'nCount_RNA'),pt.size = 0,ncol = 1,cols=c(RLpalhuman,VZpalhuman))
+```
+
+```{r}
+library(wesanderson)
+Idents(CN.all.integrated)<-'DCN'
+CN.all.integrated<-RenameIdents(CN.all.integrated,
+                        '1'='Med','2'='Int','3'='Lat','4'='Lat','0'='Lat')
+CN.all.integrated$CN<-Idents(CN.all.integrated)
+```
+```{r,fig.width=15,fig.height=3}
+p1<-DimPlot(object = CN.all.integrated, reduction = 'tsne', label=F,repel = F,pt.size = 1.5,group.by = 'merged.res.2.renamed')+ scale_color_manual(values=VZpalhuman)
+p2<-DimPlot(object = CN.all.integrated, reduction = 'tsne', label=F,group.by = 'CN',pt.size = 1.5,
+            order=c('Lat','Int','Med'))
+p3<-DimPlot(object = CN.all.integrated, reduction = 'tsne', label=F,group.by = 'FACS',pt.size=1.5)
+p4<-DimPlot(object = CN.all.integrated, reduction = 'tsne', label=F,group.by = 'donor',pt.size=1.5)+
+scale_color_manual(values = wes_palette("FantasticFox1", n = 5))
+(p1 | p2 | p3 | p4)
+```
+
+

@@ -1,0 +1,371 @@
+---
+title: "Analaysis of human inhibiotry cells"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+library(scrattch.hicat)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(cowplot)
+library(future)
+plan(strategy = "multicore", workers = 4)
+
+options(future.globals.maxSize= 891289600)
+
+
+```
+
+load all neurons
+
+```{r,fig.width=15,fig.height=5}
+setwd('~/postdoc2/Gedankenpapers/CNevomanuscript/code/snRNAseq/human/')
+load('data/neurons.RData')
+p1<-DimPlot(neurons,label=T)
+p2<-FeaturePlot(neurons,c("SLC17A6","GAD1","SLC6A5"))
+(p1 | p2)
+```
+
+
+
+
+annotate by FACS round:
+```{r}
+plates=sapply(strsplit(rownames(neurons@meta.data),"_"),function(x) x[1])
+R01=plates %in% c("LLL29","LLL30")
+R02=plates %in% c("LLL31","LLL32","LLL33")
+
+R1=plates %in% c("LLL46","LLL47","LLL48","LLL49","LLL51")
+R2=plates %in% c("LLL50")
+R3=plates %in% c("LLL51","LLL61","LLL53","LLL59","LLL60","LLL63")
+R4=plates %in% c("LLL54","LLL55","LLL56")
+R5=plates %in% c("LLL57","LLL58")
+R6=plates %in% c("LLL79","LLL83")
+R7=plates %in% c("LLL80","LLL81","LLL82","LLL84")
+
+FACS=as.factor(as.numeric(R01)+2*as.numeric(R02)+3*as.numeric(R1)+4*as.numeric(R2)+5*as.numeric(R3)+6*as.numeric(R4)+7*as.numeric(R5)+8*as.numeric(R6)+9*as.numeric(R7))
+neurons$FACS<-FACS
+```
+
+
+
+
+```{r}
+VlnPlot(neurons,c("SLC17A6","GAD1"))
+```
+do not ignore 9. according to seurat alignment it looks like mouse gly3.just remove hihg slc17a6 cells.
+alignment to Broad cerebellar cortex dataset identifies subset of cl9 as contaminating golgi cells. remove these as well.
+alignment also clearly identified cl 11 as MLI1 from cortex. so remove these. 
+cluster 11 is still unclear, but small, very different and strangley represented across all donors, even those that barely gave good cells. so remove.
+
+```{r}
+inh<-subset(neurons,idents=c(1,2,4,6,8,10,9))
+inh<-subset(inh,subset= SLC17A6<4)
+load('data/contaminatingGolgicells.RData')
+inh<-subset(inh,cells=golgi, invert=T)
+```
+
+
+drop MT- genes
+```{r}
+mt<-grep("^MT-",rownames(inh),invert = T)
+inh<-inh[mt,]
+```
+
+
+
+
+Focus on B1 for now to avoid donor effects.
+
+```{r}
+Idents(inh)<-'donor'
+inhB1<-subset(inh,idents="B1")
+```
+
+follow standard work flow.
+```{r}
+inhB1 <- FindVariableFeatures(object = inhB1,selection.method = "vst",nfeatures = 2000,verbose=FALSE)
+inhB1 <- ScaleData(object = inhB1,vars.to.regress = c('FACS'))
+#inh <- RunPCA(object = inh,npcs = 30,verbose = FALSE)
+
+
+source('../helperfunctions/pc_modification_functions_S3_forRNA.R')
+
+inhB1<-RunTruncatedPCA(inhB1,n.genes.pc = 60)
+ElbowPlot(object = inhB1)
+```
+```{r, fig.height=6, fig.width=10, warning=FALSE}
+#inhB1 <- JackStraw(object = inhB1, dims=20)
+#inhB1 <- ScoreJackStraw(inhB1,dims=1:20)
+#JackStrawPlot(object = inhB1,dims=1:20)
+```
+
+```{r}
+usefuldims=1:9
+dims.remove=c(1,6)
+usefuldims=usefuldims[!usefuldims %in% dims.remove]
+```
+
+```{r, fig.height=10, fig.width=15, message=FALSE, warnings=FALSE}
+
+inhB1<- FindNeighbors(inhB1,dims=usefuldims)
+inhB1 <- FindClusters(object = inhB1, resolution = 2)
+
+
+
+inhB1 <- RunTSNE(object = inhB1, dims = usefuldims, perplinhity=30, dim.embed = 2)
+
+
+p1<-DimPlot(object = inhB1, reduction = 'tsne', label=TRUE,pt.size = 1.5)
+p2<-DimPlot(inhB1,group.by = 'FACS',pt.size = 1.5)
+p3<-DimPlot(inhB1,group.by = 'DCN',pt.size = 1.5)
+p4<-DimPlot(inhB1,group.by = 'orig.ident',pt.size = 1.5)
+plot_grid(p1,p2,p3,p4,ncol=2)
+```
+
+
+
+merge clusters using allen package.
+```{r}
+library(scrattch.hicat)
+rd.dat <- t(GetAssayData(object = inhB1, slot = "scale.data"))
+
+merge.param <- de_param(padj.th     = 0.05, 
+                     lfc.th      = 1, 
+                     low.th      = 1, 
+                     q1.th       = 0.4, 
+                     q.diff.th   = 0.6, 
+                     de.score.th = 40)
+
+merge.result <- merge_cl(as.matrix(GetAssayData(object = inhB1, slot = "data")), 
+                         cl = inhB1$RNA_snn_res.2, 
+                         rd.dat = rd.dat,
+                         de.param = merge.param)
+
+
+if (is.null(merge.result))
+  {inhB1$merged.res.2<-'inh_1'
+} else {
+inhB1$merged.res.2<-as.factor(paste('inh_',merge.result$cl,sep=''))
+}
+Idents(inhB1)<-'merged.res.2'
+```
+
+```{r,fig.width=15,fig.height=5}
+p1<-DimPlot(inhB1,label=T,group.by = 'merged.res.2',pt.size = 1.5)
+p2<-DimPlot(inhB1,label=T,group.by = 'FACS',pt.size=1.5)
+(p1 | p2)
+```
+
+
+big batch effects in Inh1 class neurons.
+
+try integration across FACS sessions:
+
+```{r}
+CN.list <- SplitObject(inhB1, split.by = "FACS")
+for (i in 1:length(CN.list)) {
+    CN.list[[i]] <- NormalizeData(CN.list[[i]], verbose = FALSE,scale.factor = 1e6)
+    CN.list[[i]] <- FindVariableFeatures(CN.list[[i]], selection.method = "vst", 
+        nfeatures = 2000, verbose = FALSE)
+}
+CN.anchors <- FindIntegrationAnchors(object.list = CN.list, dims = 1:20,k.filter = 70)
+CN.integrated <- IntegrateData(anchorset = CN.anchors, dims = 1:20)
+
+```
+```{r}
+DefaultAssay(CN.integrated) <- "integrated"
+CN.integrated <- ScaleData(CN.integrated, verbose = FALSE)
+CN.integrated <- RunPCA(CN.integrated, npcs = 30, verbose = FALSE)
+ElbowPlot(CN.integrated)
+```
+```{r, fig.height=6, fig.width=10, warning=FALSE}
+#CN.integrated <- JackStraw(object = CN.integrated, dims=20)
+#CN.integrated <- ScoreJackStraw(CN.integrated,dims=1:20)
+#JackStrawPlot(object = CN.integrated,dims=1:20)
+```
+
+
+
+```{r}
+usefuldims=1:5
+dims.remove=c()
+usefuldims=usefuldims[!usefuldims %in% dims.remove]
+```
+
+```{r, fig.height=5, fig.width=7}
+CN.integrated<- FindNeighbors(CN.integrated,dims=usefuldims)
+CN.integrated <- FindClusters(object = CN.integrated, resolution = 2)
+```
+
+
+
+```{r, fig.height=10, fig.width=15, message=FALSE, warnings=FALSE}
+CN.integrated <- RunTSNE(object = CN.integrated, dims = usefuldims, perplinhity=30, dim.embed = 2)
+
+
+p1<-DimPlot(object = CN.integrated, reduction = 'tsne', label=TRUE,pt.size = 1.5,group.by = 'integrated_snn_res.2')
+p2<-DimPlot(CN.integrated,group.by = 'FACS',pt.size = 1.5)
+p3<-DimPlot(CN.integrated,group.by = 'DCN',pt.size = 1.5)
+p4<-DimPlot(CN.integrated,group.by = 'orig.ident',pt.size = 1.5)
+plot_grid(p1,p2,p3,p4,ncol=2)
+```
+
+
+merge clusters using allen package.
+```{r}
+library(scrattch.hicat)
+rd.dat <- t(GetAssayData(object = CN.integrated, slot = "scale.data"))
+
+merge.param <- de_param(padj.th     = 0.05, 
+                     lfc.th      = 1, 
+                     low.th      = 1, 
+                     q1.th       = 0.4, 
+                     q.diff.th   = 0.6, 
+                     de.score.th = 40)
+
+merge.result <- merge_cl(as.matrix(GetAssayData(object = CN.integrated, slot = "data")), 
+                         cl = CN.integrated$integrated_snn_res.2, 
+                         rd.dat = rd.dat,
+                         de.param = merge.param)
+
+
+if (is.null(merge.result))
+  {CN.integrated$merged.res.1<-'inh_1'
+} else {
+CN.integrated$merged.res.1<-as.factor(paste('inh_',merge.result$cl,sep=''))
+}
+Idents(CN.integrated)<-'merged.res.1'
+```
+
+```{r,fig.width=15,fig.height=5}
+p1<-DimPlot(CN.integrated,label=T,group.by = 'merged.res.1',pt.size = 1.5)
+p2<-DimPlot(CN.integrated,label=T,group.by = 'DCN',pt.size=1.5)
+(p1 | p2)
+```
+```{r}
+FeaturePlot(CN.integrated,c("SNAP25","SLC17A6","GAD1","SLC6A5"))
+```
+
+
+Now try this for all inhibitory cells!
+```{r}
+Idents(inh)<-'donor'
+inh<-subset(inh,idents=c('B0','B1','B3'))
+```
+
+try integration across FACS sessions:
+
+```{r}
+CN.list <- SplitObject(inh, split.by = c("FACS"))
+for (i in 1:length(CN.list)) {
+    CN.list[[i]] <- NormalizeData(CN.list[[i]], verbose = FALSE,scale.factor = 1e6)
+    CN.list[[i]] <- FindVariableFeatures(CN.list[[i]], selection.method = "vst", 
+        nfeatures = 2000, verbose = FALSE)
+}
+CN.anchors <- FindIntegrationAnchors(object.list = CN.list, dims = 1:10,k.filter = 45)
+CN.all.integrated <- IntegrateData(anchorset = CN.anchors, dims = 1:10)
+
+```
+```{r}
+DefaultAssay(CN.all.integrated) <- "integrated"
+CN.all.integrated <- ScaleData(CN.all.integrated, verbose = FALSE,vars.to.regress = c('nCount_RNA','donor'))
+CN.all.integrated <- RunPCA(CN.all.integrated, npcs = 30, verbose = FALSE)
+ElbowPlot(CN.all.integrated)
+```
+```{r, fig.height=6, fig.width=10, warning=FALSE}
+#CN.all.integrated <- JackStraw(object = CN.all.integrated, dims=20)
+#CN.all.integrated <- ScoreJackStraw(CN.all.integrated,dims=1:20)
+#JackStrawPlot(object = CN.all.integrated,dims=1:20)
+```
+
+
+
+```{r}
+usefuldims=1:5
+dims.remove=c()
+usefuldims=usefuldims[!usefuldims %in% dims.remove]
+```
+
+```{r, fig.height=5, fig.width=7}
+CN.all.integrated<- FindNeighbors(CN.all.integrated,dims=usefuldims)
+CN.all.integrated <- FindClusters(object = CN.all.integrated, resolution = 2)
+```
+
+
+
+```{r, fig.height=10, fig.width=15, message=FALSE, warnings=FALSE}
+CN.all.integrated <- RunTSNE(object = CN.all.integrated, dims = usefuldims, perplexity=50, dim.embed = 2,seed.use=123)
+
+
+p1<-DimPlot(object = CN.all.integrated, reduction = 'tsne', label=TRUE,pt.size = 1.5,group.by = 'integrated_snn_res.2')
+p2<-DimPlot(CN.all.integrated,group.by = 'FACS',pt.size = 1.5)
+p3<-DimPlot(CN.all.integrated,group.by = 'DCN',pt.size = 1.5)
+p4<-DimPlot(CN.all.integrated,group.by = 'donor',pt.size = 1.5)
+(p1 | p2) / ( p3 | p4)
+```
+
+
+merge clusters using allen package.
+```{r}
+library(scrattch.hicat)
+rd.dat <- t(GetAssayData(object = CN.all.integrated, slot = "scale.data"))
+
+merge.param <- de_param(padj.th     = 0.05, 
+                     lfc.th      = 1, 
+                     low.th      = 1, 
+                     q1.th       = 0.4, 
+                     q.diff.th   = 0.6, 
+                     de.score.th = 40)
+
+merge.result <- merge_cl(as.matrix(GetAssayData(object = CN.all.integrated, slot = "data")), 
+                         cl = CN.all.integrated$integrated_snn_res.2, 
+                         rd.dat = rd.dat,
+                         de.param = merge.param)
+
+
+if (is.null(merge.result))
+  {CN.all.integrated$merged.res.2<-'inh_1'
+} else {
+CN.all.integrated$merged.res.2<-as.factor(paste('inh_',merge.result$cl,sep=''))
+}
+Idents(CN.all.integrated)<-'merged.res.2'
+```
+
+```{r,fig.width=15,fig.height=5}
+p1<-DimPlot(CN.all.integrated,label=T,group.by = 'merged.res.2',pt.size = 1.5)
+p2<-DimPlot(CN.all.integrated,label=F,group.by = 'FACS',pt.size=1.5)
+p3<-DimPlot(CN.all.integrated,label=F,group.by = 'donor',pt.size=1.5)
+p4<-DimPlot(CN.all.integrated,label=F,group.by = 'DCN',pt.size=1.5)
+
+(p1 | p2)/(p3 | p4)
+```
+```{r,fig.width=15,fig.height=10}
+FeaturePlot(CN.all.integrated,c("rna_SNAP25","rna_SLC17A6","rna_GAD1","rna_SLC6A5"))
+```
+```{r}
+FeaturePlot(CN.all.integrated,c("nFeature_RNA","nCount_RNA"))
+```
+
+```{r}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

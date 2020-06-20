@@ -1,0 +1,294 @@
+---
+title: "Analysis of human excitatory cells"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(Seurat)
+library(scrattch.hicat)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(cowplot)
+```
+
+load all neurons
+
+```{r,fig.width=15,fig.height=5}
+setwd('~/postdoc2/Gedankenpapers/CNevomanuscript/code/snRNAseq/human/')
+load('data/neurons.RData')
+p1<-DimPlot(neurons,label=T)
+p2<-FeaturePlot(neurons,c("SLC17A6","GAD1"))
+(p1 | p2)
+```
+```{r}
+VlnPlot(neurons,c("nFeature_RNA","nCount_RNA"))
+```
+
+```{r}
+VlnPlot(neurons,c("SLC17A6","GAD1"))
+```
+
+
+annotate by FACS round:
+```{r}
+plates=sapply(strsplit(rownames(neurons@meta.data),"_"),function(x) x[1])
+R01=plates %in% c("LLL29","LLL30")
+R02=plates %in% c("LLL31","LLL32","LLL33")
+
+R1=plates %in% c("LLL46","LLL47","LLL48","LLL49","LLL51")
+R2=plates %in% c("LLL50")
+R3=plates %in% c("LLL51","LLL61","LLL53","LLL59","LLL60","LLL63")
+R4=plates %in% c("LLL54","LLL55","LLL56")
+R5=plates %in% c("LLL57","LLL58")
+R6=plates %in% c("LLL79","LLL83")
+R7=plates %in% c("LLL80","LLL81","LLL82","LLL84")
+
+FACS=as.factor(as.numeric(R01)+2*as.numeric(R02)+3*as.numeric(R1)+4*as.numeric(R2)+5*as.numeric(R3)+6*as.numeric(R4)+7*as.numeric(R5)+8*as.numeric(R6)+9*as.numeric(R7))
+neurons$FACS<-FACS
+```
+
+
+subset out excitatory neurons. and run through standard pipeline.
+```{r}
+ex<-subset(neurons,idents=c(0,3,5,7))
+```
+
+
+
+```{r}
+ex <- FindVariableFeatures(object = ex,selection.method = "vst",nfeatures = 2000,verbose=FALSE)
+ex <- ScaleData(object = ex,vars.to.regress = c('nCount_RNA','donor'))
+
+
+source('../helperfunctions/pc_modification_functions_S3_forRNA.R')
+
+ex<-RunTruncatedPCA(ex,n.genes.pc = 60)
+ElbowPlot(object = ex)
+```
+```{r, fig.height=6, fig.width=10, warning=FALSE}
+#ex <- JackStraw(object = ex, dims=20)
+#ex <- ScoreJackStraw(ex,dims=1:20)
+#JackStrawPlot(object = ex,dims=1:20)
+```
+
+```{r}
+usefuldims=1:18
+dims.remove=c()
+usefuldims=usefuldims[!usefuldims %in% dims.remove]
+```
+
+```{r, fig.height=5, fig.width=7}
+ex<- FindNeighbors(ex,dims=1:18)
+ex <- FindClusters(object = ex, resolution = 1)
+```
+
+
+
+```{r, fig.height=10, fig.width=15, message=FALSE, warnings=FALSE}
+ex <- RunTSNE(object = ex, dims = 1:18, perplexity=30, dim.embed = 2)
+
+
+p1<-DimPlot(object = ex, reduction = 'tsne', label=TRUE,pt.size = 1.5)
+p2<-DimPlot(ex,group.by = 'donor',pt.size = 1.5)
+p3<-DimPlot(ex,group.by = 'DCN',pt.size = 1.5)
+p4<-DimPlot(ex,group.by = 'orig.ident',pt.size = 1.5)
+plot_grid(p1,p2,p3,p4,ncol=2)
+```
+
+Large donor effects.
+Focus on B1 for now to avoid donor effects.
+
+```{r}
+Idents(ex)<-'donor'
+exB1<-subset(ex,idents="B1")
+```
+
+drop MT- genes
+```{r}
+mt<-grep("^MT-",rownames(exB1),invert = T)
+exB1<-exB1[mt,]
+```
+
+
+```{r}
+exB1 <- FindVariableFeatures(object = exB1,selection.method = "vst",nfeatures = 2000,verbose=FALSE)
+exB1 <- ScaleData(object = exB1,vars.to.regress = c('nFeature_RNA'))
+exB1<-RunTruncatedPCA(exB1,n.genes.pc = 60)
+ElbowPlot(object = exB1)
+```
+```{r, fig.height=6, fig.width=10, warning=FALSE}
+#exB1 <- JackStraw(object = exB1, dims=20)
+#exB1 <- ScoreJackStraw(exB1,dims=1:20)
+#JackStrawPlot(object = exB1,dims=1:20)
+```
+
+```{r}
+usefuldims=1:5
+dims.remove=c()
+usefuldims=usefuldims[!usefuldims %in% dims.remove]
+```
+
+```{r, fig.height=5, fig.width=7}
+exB1<- FindNeighbors(exB1,dims=usefuldims)
+exB1 <- FindClusters(object = exB1, resolution = 2)
+```
+
+
+
+```{r, fig.height=10, fig.width=15, message=FALSE, warnings=FALSE}
+exB1 <- RunTSNE(object = exB1, dims = usefuldims, perplexity=30, dim.embed = 2)
+
+
+p1<-DimPlot(object = exB1, reduction = 'tsne', label=TRUE,pt.size = 1.5)
+p2<-DimPlot(exB1,group.by = 'donor',pt.size = 1.5)
+p3<-DimPlot(exB1,group.by = 'DCN',pt.size = 1.5)
+p4<-DimPlot(exB1,group.by = 'orig.ident',pt.size = 1.5)
+plot_grid(p1,p2,p3,p4,ncol=2)
+```
+
+
+
+merge clusters using allen package.
+```{r}
+library(scrattch.hicat)
+rd.dat <- t(GetAssayData(object = exB1, slot = "scale.data"))
+
+merge.param <- de_param(padj.th     = 0.05, 
+                     lfc.th      = 1, 
+                     low.th      = 1, 
+                     q1.th       = 0.4, 
+                     q.diff.th   = 0.6, 
+                     de.score.th = 40)
+
+merge.result <- merge_cl(as.matrix(GetAssayData(object = exB1, slot = "data")), 
+                         cl = exB1$RNA_snn_res.2, 
+                         rd.dat = rd.dat,
+                         de.param = merge.param)
+
+
+if (is.null(merge.result))
+  {exB1$merged.res.2<-'ex_1'
+} else {
+exB1$merged.res.2<-as.factor(paste('ex_',merge.result$cl,sep=''))
+}
+Idents(exB1)<-'merged.res.2'
+```
+
+```{r,fig.width=15,fig.height=5}
+p1<-DimPlot(exB1,label=T,group.by = 'merged.res.2',pt.size = 1.5)
+p2<-DimPlot(exB1,label=T,group.by = 'RNA_snn_res.2',pt.size=1.5)
+(p1 | p2)
+```
+```{r}
+FeaturePlot(exB1,c("SNAP25",'SLC17A6',"GAD1","SLC6A5"))
+```
+remove GAD1+ outlier
+
+```{r}
+Idents(exB1)<-'merged.res.2'
+gadcont<-subset(exB1,idents='ex_12')
+exB1clean<-subset(exB1,idents='ex_12',invert=T)
+#save(gadcont,file='gad1cont.RData')
+```
+
+
+
+```{r}
+exB1clean <- FindVariableFeatures(object = exB1clean,selection.method = "vst",nfeatures = 2000,verbose=FALSE)
+exB1clean <- ScaleData(object = exB1clean,vars.to.regress = c())
+
+
+exB1clean<-RunTruncatedPCA(exB1clean,n.genes.pc = 60)
+ElbowPlot(object = exB1clean)
+```
+```{r, fig.height=6, fig.width=10, warning=FALSE}
+#exB1clean <- JackStraw(object = exB1clean, dims=20)
+#exB1clean <- ScoreJackStraw(exB1clean,dims=1:20)
+#JackStrawPlot(object = exB1clean,dims=1:20)
+```
+
+```{r}
+usefuldims=1:7
+dims.remove=c()
+usefuldims=usefuldims[!usefuldims %in% dims.remove]
+```
+
+```{r, fig.height=5, fig.width=7}
+exB1clean<- FindNeighbors(exB1clean,dims=usefuldims)
+exB1clean <- FindClusters(object = exB1clean, resolution = 2)
+```
+
+
+
+```{r, fig.height=10, fig.width=15, message=FALSE, warnings=FALSE}
+exB1clean <- RunTSNE(object = exB1clean, dims = usefuldims, perplexity=20, dim.embed = 2)
+
+
+p1<-DimPlot(object = exB1clean, reduction = 'tsne', label=TRUE,pt.size = 1.5)
+p2<-DimPlot(exB1clean,group.by = 'donor',pt.size = 1.5)
+p3<-DimPlot(exB1clean,group.by = 'DCN',pt.size = 1.5)
+p4<-DimPlot(exB1clean,group.by = 'orig.ident',pt.size = 1.5)
+plot_grid(p1,p2,p3,p4,ncol=2)
+```
+
+
+merge clusters using allen package.
+```{r}
+library(scrattch.hicat)
+rd.dat <- t(GetAssayData(object = exB1clean, slot = "scale.data"))
+
+merge.param <- de_param(padj.th     = 0.05, 
+                     lfc.th      = 1, 
+                     low.th      = 1, 
+                     q1.th       = 0.4, 
+                     q.diff.th   = 0.6, 
+                     de.score.th = 40)
+
+merge.result <- merge_cl(as.matrix(GetAssayData(object = exB1clean, slot = "data")), 
+                         cl = exB1clean$RNA_snn_res.2, 
+                         rd.dat = rd.dat,
+                         de.param = merge.param)
+
+
+if (is.null(merge.result))
+  {exB1clean$merged.res.2<-'ex_1'
+} else {
+exB1clean$merged.res.2<-as.factor(paste('ex_',merge.result$cl,sep=''))
+}
+Idents(exB1clean)<-'merged.res.2'
+```
+
+```{r,fig.width=15,fig.height=10}
+p1<-DimPlot(exB1clean,label=T,group.by = 'merged.res.2',pt.size = 1.5)
+p2<-DimPlot(exB1clean,label=T,group.by = 'RNA_snn_res.2',pt.size=1.5)
+p3<-DimPlot(exB1clean,group.by = 'DCN',pt.size = 1.5)
+p4<-DimPlot(exB1clean,group.by = 'FACS',pt.size = 1.5)
+(p1 | p2)/(p3 | p4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
