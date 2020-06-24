@@ -119,4 +119,21 @@ scale_color_manual(values = wes_palette("FantasticFox1", n = 5))
 (p1 | p2 | p3 | p4)
 ```
 
+Plot B1 ex neurons without Med cluster, as undersampled and distracting.
+
+```{r}
+Idents(exB1clean)<-'merged.res.2.renamed'
+exB1f<-subset(exB1clean,idents = 'Med',invert=T)
+```
+
+
+```{r, fig.height=4, fig.width=15, message=FALSE, warnings=FALSE}
+exB1f <- RunTSNE(object = exB1f, dims = 1:10, perplexity=30, dim.embed = 2)
+
+p1<-DimPlot(object = exB1f, reduction = 'tsne', label=F,repel = F,pt.size = 1.5,group.by = 'merged.res.2.renamed')+ scale_color_manual(values=RLpalhuman[2:7])
+p2<-DimPlot(object = exB1f, reduction = 'tsne', label=F,group.by = 'CN',pt.size = 1.5)+
+  scale_color_manual(values=CNpal)
+p3<-DimPlot(object = exB1f, reduction = 'tsne', label=F,group.by = 'FACS',pt.size=1.5)
+(p1 | p2 | p3)
+```
 

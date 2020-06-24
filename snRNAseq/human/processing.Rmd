@@ -177,10 +177,10 @@ load('~/postdoc2/DCN_sequencing/human/plateseq/novaseq46/N46.RData')
 
 
 annotate by donor: 
-B0 = white male
-B1=18-T2789 white male
+B0 (H2) = white male
+B1 (H1) =18-T2789 white male
 B2=19-T0161 white male
-B3=19-T0469 (aka 449) black female
+B3 (H3) =19-T0469 (aka 449) black female
 B4=18-T2807 white female
 B5=?
 

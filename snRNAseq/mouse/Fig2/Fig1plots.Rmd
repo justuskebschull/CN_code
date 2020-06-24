@@ -428,7 +428,7 @@ Idents(RL)<-'subareas3'
 
 
 ```{r}
-DotPlot(RL,features=rev(c('Foxp2','Penk','Lmx1a','Trdn','Prr16','Ankfn1','Prox1',"Cd24a","Cpne4","Map7")),split.by = 'classes',cols = c('red','blue'))+RotatedAxis()
+DotPlot(RL,features=rev(c('Foxp2','Penk','Lmx1a','Trdn','Prr16','Ankfn1','Prox1',"Cd24a","Cpne4","Map7")),split.by = 'classes',cols = c('blue','blue'))+RotatedAxis()
 ```
 
 
